@@ -8,12 +8,16 @@ void put(uint64_t c) {
 }
 
 void check(uint64_t id, uint64_t pass) {
+  // the whole line goes out in ONE write, so lines from different processes never mix
   if (pass) {
-    put('o'); put('k');
+    *out = 'o' + 'k' * 256 + ' ' * 65536 + ('0' + id / 10) * 16777216
+      + ('0' + id % 10) * 4294967296 + 10 * 1099511627776;
+    write(1, out, 6);
   } else {
-    put('F'); put('A'); put('I'); put('L');
+    *out = 'F' + 'A' * 256 + 'I' * 65536 + 'L' * 16777216 + ' ' * 4294967296
+      + ('0' + id / 10) * 1099511627776 + ('0' + id % 10) * 281474976710656 + 10 * 72057594037927936;
+    write(1, out, 8);
   }
-  put(' '); put('0' + id / 10); put('0' + id % 10); put(10);
 }
 
 void spin(uint64_t n) {
@@ -36,7 +40,9 @@ void reader(uint64_t id) {
 
   pipe_read(p, buf, 1);
 
-  put('r'); put('0' + id); put('='); put(*buf); put(10);
+  // "rN=X" plus newline in one write
+  *out = 'r' + ('0' + id) * 256 + '=' * 65536 + *buf * 16777216 + 10 * 4294967296;
+  write(1, out, 5);
 
   exit(0);
 }
