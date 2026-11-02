@@ -1,0 +1,7 @@
+# selfie binary built from selfie.c (by gcc or by run_tests.sh)
+/selfie
+/selfie.exe
+
+# binaries and assembly that selfie itself can write (-o, -s)
+*.m
+*.s
