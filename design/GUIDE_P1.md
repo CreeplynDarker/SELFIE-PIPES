@@ -106,7 +106,7 @@ uint64_t EXITCODE_DEADLOCK                = 28;
 
 ## Step 3 — `init_context`: start the process fields at 0
 
-**Where:** lines 11171–11173, the last lines of `void init_context(...)`. Search for `set_nchildren(context, 0);`.
+**Where:** lines 11176–11178, the last lines of `void init_context(...)`. Search for `set_nchildren(context, 0);`.
 
 **Remove these 3 lines:**
 
@@ -133,7 +133,7 @@ uint64_t EXITCODE_DEADLOCK                = 28;
 
 ## Step 4 — `block_context`: the blocked process becomes the head of the list
 
-**Where:** lines 11231–11238, inside `void block_context(uint64_t* context)`. Search for `set_next_context(context, blocked_contexts);`; the block to replace starts at that line and ends at the `}` that closes the `else`.
+**Where:** lines 11236–11243, inside `void block_context(uint64_t* context)`. Search for `set_next_context(context, blocked_contexts);`; the block to replace starts at that line and ends at the `}` that closes the `else`.
 
 **Remove these 8 lines** (two of the lines that look empty contain only tabs; select from the first line to the closing `}` and delete them all):
 
@@ -167,7 +167,7 @@ uint64_t EXITCODE_DEADLOCK                = 28;
 
 ## Step 5 — `unblock_context`: keep both lists valid
 
-**Where:** lines 11253–11260, inside `void unblock_context(uint64_t* context)`. Search for `void unblock_context(uint64_t* context) {` to reach the function. The block to replace starts at the line `if (get_prev_context(context) != (uint64_t*) 0) {` inside it (the only one there) and goes down to `used_contexts = context;`, just before the line `set_status(context, STATUS_READY);`.
+**Where:** lines 11258–11265, inside `void unblock_context(uint64_t* context)`. Search for `void unblock_context(uint64_t* context) {` to reach the function. The block to replace starts at the line `if (get_prev_context(context) != (uint64_t*) 0) {` inside it (the only one there) and goes down to `used_contexts = context;`, just before the line `set_status(context, STATUS_READY);`.
 
 **Remove these 8 lines:**
 
@@ -207,7 +207,7 @@ uint64_t EXITCODE_DEADLOCK                = 28;
 
 ## Step 6 — `mipster`: a scheduler that never picks a blocked process
 
-**Where:** lines 11891–11922: the whole function `uint64_t mipster(uint64_t* to_context)`. Search for `uint64_t mipster(uint64_t* to_context) {`. The function ends at the `}` on the line just before `uint64_t hypster(uint64_t* to_context) {`.
+**Where:** lines 11896–11927: the whole function `uint64_t mipster(uint64_t* to_context)`. Search for `uint64_t mipster(uint64_t* to_context) {`. The function ends at the `}` on the line just before `uint64_t hypster(uint64_t* to_context) {`.
 
 **Remove the whole function, these 32 lines:**
 
