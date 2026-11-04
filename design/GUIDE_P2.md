@@ -61,7 +61,7 @@ FAIL  p2_fork_gap
 
 **Where:** inside `void implement_fork(uint64_t* context)`, under the comment `/* Copy low pages */`. Search for `get_highest_lo_page(context)) {`.
 
-**Remove these 4 lines** (lines 8089–8092):
+**Remove these 4 lines** (lines 8102–8105):
 
 ```c
 	while (get_page_of_virtual_address(vaddr) < get_highest_lo_page(context)) {
@@ -92,7 +92,7 @@ FAIL  p2_fork_gap
 
 **Where:** a few lines below, under `/* Copy high pages */`. Search for `get_highest_hi_page(context)) {`.
 
-**Remove these 4 lines** (lines 8098–8101):
+**Remove these 4 lines** (lines 8111–8114):
 
 ```c
 	while (get_page_of_virtual_address(vaddr) < get_highest_hi_page(context)) {
