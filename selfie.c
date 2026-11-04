@@ -7811,10 +7811,19 @@ void implement_write(uint64_t* context) {
   // null-terminate buffer
   *(IO_buffer + size / sizeof(uint64_t)) = 0;
 
-  if (copy_buffer(context, vbuffer, IO_buffer, size, 0))
+  /****************************************************************/
+  /****************************************************************/
+  if (copy_buffer(context, vbuffer, IO_buffer, size, 0)) {
+    // copy_buffer copies whole words and overwrites the terminator set above:
+    // terminate again exactly after size bytes
+    store_character((char*) IO_buffer, size, 0);
     *(get_regs(context) + REG_A0) = write_to_printf(fd, IO_buffer, size);
-  else
-    *(get_regs(context) + REG_A0) = sign_shrink(-1, SYSCALL_BITWIDTH);
+  }
+  /****************************************************************/
+  /****************************************************************/
+  else {
+    *(get_regs(context) + REG_A0) = sign_shrink(-1, SYSCALL_BITWIDTH); 
+  }
 
   set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
 
