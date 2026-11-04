@@ -2489,7 +2489,12 @@ uint64_t EXITCODE_UNKNOWNINSTRUCTION     = 23;
 uint64_t EXITCODE_UNKNOWNSYSCALL         = 24;
 uint64_t EXITCODE_UNSUPPORTEDSYSCALL     = 25;
 uint64_t EXITCODE_MULTIPLEEXCEPTIONERROR = 26;
+/**************************************************/
+/**************************************************/
 uint64_t EXITCODE_UNCAUGHTEXCEPTION      = 27;
+uint64_t EXITCODE_DEADLOCK                = 28;
+/**************************************************/
+/**************************************************/
 
 uint64_t SYSCALL_BITWIDTH = 32; // integer bit width for system calls
 
@@ -7601,8 +7606,12 @@ void implement_exit(uint64_t* context) {
 		if (get_status(parent) == STATUS_BLOCKED) {
 			wstatus_addr = *(get_regs(parent) + REG_A1);
 			if (wstatus_addr != (uint64_t) 0) {
-				store_virtual_memory(get_pt(parent), wstatus_addr, get_exit_code(context));
+        /***********************************************************/
+        /***********************************************************/
+				map_and_store(parent, wstatus_addr, get_exit_code(context));
 				unblock_context(parent);
+        /***********************************************************/
+        /***********************************************************/
 			}
 		}
 	}
@@ -11172,8 +11181,15 @@ void init_context(uint64_t* context, uint64_t* parent, uint64_t* vctxt) {
   set_gcs_in_period(context, 0);
   set_use_gc_kernel(context, GC_DISABLED);
 
+  /********************************************/
+  /********************************************/
   set_status(context, STATUS_READY);
   set_nchildren(context, 0);
+  set_parent_process(context, (uint64_t*) 0);
+  set_child_exit_code(context, 0);
+  set_child_pid(context, 0);
+  /********************************************/
+  /********************************************/
 }
 
 uint64_t* find_context(uint64_t* parent, uint64_t* vctxt) {
@@ -11227,16 +11243,21 @@ void block_context(uint64_t* context) {
 
 	/* Since we are moving to the blocked list, used_contexts shouldn't point
 		to this context */
-	if (used_contexts == context) used_contexts = get_next_context(context);
+	if (used_contexts == context){
+    used_contexts = get_next_context(context);
+  }
 
+  /***********************************************/
+  /***********************************************/
 	set_next_context(context, blocked_contexts);
-	
-	if (blocked_contexts != (uint64_t*) 0) {
-		
-		set_prev_context(blocked_contexts, context);
-	} else {
-		blocked_contexts = context;
-	}
+	set_prev_context(context, (uint64_t*) 0);
+	if (blocked_contexts != (uint64_t*) 0){
+    set_prev_context(blocked_contexts, context);
+  }
+	// the newly blocked context is always the new head of the list
+	blocked_contexts = context;
+  /***********************************************/
+  /***********************************************/
 
 	set_status(context, STATUS_BLOCKED);
 	N_BLOCKED_CONTEXTS = N_BLOCKED_CONTEXTS + 1;
@@ -11251,14 +11272,24 @@ void unblock_context(uint64_t* context) {
 	if (get_next_context(context) != (uint64_t*) 0)
     set_prev_context(get_next_context(context), get_prev_context(context));
 
+  /************************************************/
+  /************************************************/
 	if (get_prev_context(context) != (uint64_t*) 0) {
-		set_next_context(get_prev_context(context), get_next_context(context));
+    set_next_context(get_prev_context(context), get_next_context(context));
 		set_prev_context(context, (uint64_t*) 0);
-	}
+	} 
+  else {
+		// context was the head of the blocked list
+		blocked_contexts = get_next_context(context);
+  }
 
-	set_prev_context(used_contexts, context);
+	if (used_contexts != (uint64_t*) 0) {
+    set_prev_context(used_contexts, context);
+  }
 	set_next_context(context, used_contexts);
 	used_contexts = context;
+  /************************************************/
+  /************************************************/
 
 	set_status(context, STATUS_READY);
 	N_BLOCKED_CONTEXTS = N_BLOCKED_CONTEXTS - 1;
@@ -11886,6 +11917,29 @@ uint64_t handle_exception(uint64_t* context) {
   }
 }
 
+/*******************************************************************/
+/*******************************************************************/
+uint64_t* next_ready_context(uint64_t* from_context) {
+  // round robin over used_contexts, which holds only READY and RUNNING contexts
+  if (get_status(from_context) == STATUS_RUNNING)
+    set_status(from_context, STATUS_READY);
+
+  if (get_status(from_context) == STATUS_READY)
+    // from_context is still in used_contexts: take its successor
+    if (get_next_context(from_context) != (uint64_t*) 0)
+      return get_next_context(from_context);
+
+  // wrap around, or from_context was blocked or freed: its next pointer
+  // now belongs to another list, so start over at the head (0 = none ready)
+  return used_contexts;
+}
+
+uint64_t report_deadlock() {
+  printf("%s: deadlock: %lu context(s) blocked and none ready\n", selfie_name, N_BLOCKED_CONTEXTS);
+
+  return EXITCODE_DEADLOCK;
+}
+
 uint64_t mipster(uint64_t* to_context) {
   uint64_t timeout;
   uint64_t* from_context;
@@ -11900,24 +11954,27 @@ uint64_t mipster(uint64_t* to_context) {
       to_context = get_parent(from_context);
 
       timeout = TIMEROFF;
-    } else if (handle_exception(from_context) == EXIT)
-      return get_exit_code(from_context);
-    else {
-      // TODO: scheduler should go here
-	  if (get_next_context(to_context) == (uint64_t *) 0) {
-		to_context = used_contexts;
-	  } else if (get_status(to_context) == STATUS_FREED) {
-		to_context = used_contexts;
-	  } else {
-		to_context = get_next_context (from_context);
-	  }
+    } else if (handle_exception(from_context) == EXIT) {
+      // the last running context exited while others still sleep
+      if (used_contexts == (uint64_t*) 0)
+        if (N_BLOCKED_CONTEXTS > 0)
+          return report_deadlock();
 
-	  //to_context = from_context;
+      return get_exit_code(from_context);
+    } else {
+      to_context = next_ready_context(from_context);
+
+      if (to_context == (uint64_t*) 0)
+        // every remaining context is blocked
+        return report_deadlock();
+
       timeout = TIMESLICE;
-	  set_status(to_context, STATUS_RUNNING);
+      set_status(to_context, STATUS_RUNNING);
     }
   }
 }
+/*******************************************************************/
+/*******************************************************************/
 
 uint64_t hypster(uint64_t* to_context) {
   uint64_t* from_context;
