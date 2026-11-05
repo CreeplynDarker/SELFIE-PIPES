@@ -86,7 +86,7 @@ void emit_pipe_destroy();
 
 **Where:** inside `emit_bootstrapping`, in the list of `emit_...();` calls. Search for `// emit system call wrappers` (searching `emit_wait();` would also match its prototype near the top of the file).
 
-**Find these lines** (lines 6349–6351):
+**Find these lines** (lines 6353–6355):
 
 ```c
   emit_fork();
@@ -109,7 +109,7 @@ void emit_pipe_destroy();
 
 **Where:** just before the function `void emit_open() {`. Search for `void emit_open() {`.
 
-**Find this line** (line 7845):
+**Find this line** (line 7858):
 
 ```c
 void emit_open() {
@@ -156,7 +156,7 @@ This is the same pattern as the existing `emit_fork` (no arguments) and `emit_ex
 
 **Where:** inside `void do_ecall()`, in the `else` branch near its end. Search for `if (*(registers + REG_A7) != SYSCALL_FORK) {`.
 
-**Remove these 12 lines** (lines 10186–10197):
+**Remove these 12 lines** (lines 10210–10221):
 
 ```c
 	if (*(registers + REG_A7) != SYSCALL_FORK) {
@@ -213,7 +213,7 @@ If you skip this step, Step 7's test fails with `ecall: reading from uninitializ
 
 **Where:** just before the function `uint64_t handle_system_call(uint64_t* context) {`. Search for that line.
 
-**Find this line** (line 11810):
+**Find this line** (line 11850):
 
 ```c
 uint64_t handle_system_call(uint64_t* context) {
@@ -346,7 +346,7 @@ void implement_pipe_destroy(uint64_t* context) {
 
 **Where:** inside `uint64_t handle_system_call(uint64_t* context)`, just before the `exit` branch. Search for `else if (a7 == SYSCALL_EXIT) {`.
 
-**Find this line** (line 11939):
+**Find this line** (line 11979):
 
 ```c
   else if (a7 == SYSCALL_EXIT) {
