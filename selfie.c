@@ -8099,18 +8099,31 @@ void implement_fork(uint64_t* context) {
 	/* Copy low pages */
 	page = get_lowest_lo_page(context);
 	vaddr = page * PAGESIZE;
-	while (get_page_of_virtual_address(vaddr) < get_highest_lo_page(context)) {
-		map_and_store (child, vaddr, load_virtual_memory(get_pt(context), vaddr));
+	/***********************************************************/
+  /***********************************************************/
+  while (get_page_of_virtual_address(vaddr) < get_highest_lo_page(context)) {
+		if (is_virtual_address_mapped(get_pt(context), vaddr)){
+			map_and_store(child, vaddr, load_virtual_memory(get_pt(context), vaddr));
+    }
 		vaddr = vaddr + WORDSIZE;
 	}
-
-	/* Copy high pages */
+  /***********************************************************/
+  /***********************************************************/
+	
+  /* Copy high pages */
 	page = get_lowest_hi_page(context);
 	vaddr = page * PAGESIZE;
+
+  /***********************************************************/
+  /***********************************************************/
 	while (get_page_of_virtual_address(vaddr) < get_highest_hi_page(context)) {
-		map_and_store (child, vaddr, load_virtual_memory(get_pt(context), vaddr));
+		if (is_virtual_address_mapped(get_pt(context), vaddr)){
+			map_and_store(child, vaddr, load_virtual_memory(get_pt(context), vaddr));
+    }
 		vaddr = vaddr + WORDSIZE;
 	}
+  /***********************************************************/
+  /***********************************************************/
 	
 	/* Copy page bounds */
 	set_lowest_lo_page(child, get_lowest_lo_page(context));
