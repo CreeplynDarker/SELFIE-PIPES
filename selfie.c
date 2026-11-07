@@ -1308,6 +1308,16 @@ uint64_t SYSCALL_BRK    = 214;
 uint64_t SYSCALL_FORK	= 215;
 uint64_t SYSCALL_WAIT	= 216;
 
+/**********************************************/
+/**********************************************/
+uint64_t SYSCALL_PIPE_CREATE  = 500;
+uint64_t SYSCALL_PIPE_DESTROY = 503;
+
+void emit_pipe_create();
+void emit_pipe_destroy();
+/**********************************************/
+/**********************************************/
+
 /* DIRFD_AT_FDCWD corresponds to AT_FDCWD in fcntl.h and
    is passed as first argument of the openat system call
    emulating the (in Linux) deprecated open system call. */
@@ -6347,9 +6357,13 @@ void selfie_compile() {
   emit_fork();
   emit_wait();
   emit_open();
-
+  /*****************************************/
+  /*****************************************/
+  emit_pipe_create();
+  emit_pipe_destroy();
+  /*****************************************/
+  /*****************************************/
   emit_malloc();
-
   emit_switch();
 
   if (GC_ON) {
@@ -7846,6 +7860,31 @@ void implement_write(uint64_t* context) {
     println();
   }
 }
+
+/***********************************************************************/
+/***********************************************************************/
+void emit_pipe_create() {
+  create_symbol_table_entry(GLOBAL_TABLE, string_copy("pipe_create"),
+    0, PROCEDURE, UINT64_T, 0, code_size);
+
+  emit_addi(REG_A7, REG_ZR, SYSCALL_PIPE_CREATE);
+  emit_ecall();
+  emit_jalr(REG_ZR, REG_RA, 0);
+}
+
+void emit_pipe_destroy() {
+  create_symbol_table_entry(GLOBAL_TABLE, string_copy("pipe_destroy"),
+    0, PROCEDURE, UINT64_T, 1, code_size);
+
+  emit_load(REG_A0, REG_SP, 0); // pipe ID
+  emit_addi(REG_SP, REG_SP, WORDSIZE);
+
+  emit_addi(REG_A7, REG_ZR, SYSCALL_PIPE_DESTROY);
+  emit_ecall();
+  emit_jalr(REG_ZR, REG_RA, 0);
+}
+/***********************************************************************/
+/***********************************************************************/
 
 void emit_open() {
   create_symbol_table_entry(GLOBAL_TABLE, string_copy("open"),
@@ -10178,23 +10217,34 @@ void do_ecall() {
       implement_switch();
     }
   else {
-	if (*(registers + REG_A7) != SYSCALL_FORK) {
-		read_register(REG_A0);
-		if (*(registers + REG_A7) != SYSCALL_EXIT) {
-			if (*(registers + REG_A7) != SYSCALL_BRK) {
-				if (*(registers + REG_A7) != SYSCALL_WAIT) {
-					read_register(REG_A1);
-					read_register(REG_A2);
 
-					if (*(registers + REG_A7) == SYSCALL_OPENAT)
-					read_register(REG_A3);
-				}
-			}
+    /*********************************************************************/
+    /*********************************************************************/
+    if (*(registers + REG_A7) == SYSCALL_PIPE_CREATE){
+      // no arguments, result in a0
+      write_register(REG_A0);
+    }
+    else if (*(registers + REG_A7) != SYSCALL_FORK){
+      read_register(REG_A0);
+      if (*(registers + REG_A7) != SYSCALL_EXIT){
+        if (*(registers + REG_A7) != SYSCALL_BRK){
+          if (*(registers + REG_A7) != SYSCALL_WAIT){
+            // pipe_destroy reads only a0; pipe_write and pipe_read read a0-a2
+            if (*(registers + REG_A7) != SYSCALL_PIPE_DESTROY){
+              read_register(REG_A1);
+              read_register(REG_A2);
 
-			write_register(REG_A0);
-		}
-	}
-    
+              if (*(registers + REG_A7) == SYSCALL_OPENAT){
+                read_register(REG_A3);
+              }
+            }
+          }
+        }
+        write_register(REG_A0);
+      }
+    }
+    /*********************************************************************/
+    /*********************************************************************/
 
     // all system calls other than switch are handled by exception
     throw_exception(EXCEPTION_SYSCALL, *(registers + REG_A7));
@@ -11812,6 +11862,117 @@ void up_load_arguments(uint64_t* context, uint64_t argc, uint64_t* argv) {
   *(get_regs(context) + REG_S0) = 0;
 }
 
+/***********************************************************************/
+/***********************************************************************/
+
+// -----------------------------------------------------------------
+// ----------------------------- PIPES -----------------------------
+// -----------------------------------------------------------------
+
+// pipe object
+// +---+---------------+
+// | 0 | id            | global pipe ID (index into pipe_table)
+// | 1 | buffer        | pointer to PIPE_CAPACITY bytes of ring storage
+// | 2 | read index r  | slot of the next byte to read
+// | 3 | write index w | slot of the next byte to write
+// | 4 | count n       | number of stored bytes, 0 <= n <= PIPE_CAPACITY
+// | 5 | readers head  | first context waiting for data
+// | 6 | readers tail  | last context waiting for data
+// | 7 | writers head  | first context waiting for space
+// | 8 | writers tail  | last context waiting for space
+// +---+---------------+
+
+uint64_t PIPEENTRIES   = 9;
+uint64_t PIPE_CAPACITY = 16; // bytes; small on purpose so blocking is easy to observe
+uint64_t MAX_PIPES     = 16; // valid IDs are 1 .. MAX_PIPES - 1
+
+uint64_t* pipe_table = (uint64_t*) 0; // global registry: pipe_table[id] -> pipe object
+
+uint64_t get_pipe_id(uint64_t* pipe)     { return         *pipe; }
+char*    get_pipe_buffer(uint64_t* pipe) { return (char*) *(pipe + 1); }
+uint64_t get_pipe_r(uint64_t* pipe)      { return         *(pipe + 2); }
+uint64_t get_pipe_w(uint64_t* pipe)      { return         *(pipe + 3); }
+uint64_t get_pipe_n(uint64_t* pipe)      { return         *(pipe + 4); }
+
+void set_pipe_id(uint64_t* pipe, uint64_t id)       { *pipe       = id; }
+void set_pipe_buffer(uint64_t* pipe, char* buffer)  { *(pipe + 1) = (uint64_t) buffer; }
+void set_pipe_r(uint64_t* pipe, uint64_t r)         { *(pipe + 2) = r; }
+void set_pipe_w(uint64_t* pipe, uint64_t w)         { *(pipe + 3) = w; }
+void set_pipe_n(uint64_t* pipe, uint64_t n)         { *(pipe + 4) = n; }
+
+void syscall_return(uint64_t* context, uint64_t value) {
+  *(get_regs(context) + REG_A0) = value;
+
+  set_pc(context, get_pc(context) + INSTRUCTIONSIZE);
+}
+
+uint64_t* lookup_pipe(uint64_t id) {
+  if (pipe_table == (uint64_t*) 0)
+    return (uint64_t*) 0;
+  else if (id == 0)
+    return (uint64_t*) 0;
+  else if (id >= MAX_PIPES)
+    return (uint64_t*) 0;
+  else
+    return (uint64_t*) *(pipe_table + id);
+}
+
+void implement_pipe_create(uint64_t* context) {
+  uint64_t id;
+  uint64_t* pipe;
+
+  if (pipe_table == (uint64_t*) 0)
+    pipe_table = zmalloc(MAX_PIPES * sizeof(uint64_t*));
+
+  id = 1;
+
+  while (id < MAX_PIPES) {
+    if (*(pipe_table + id) == 0) {
+      // zeroed: r = w = n = 0 and both wait queues empty
+      pipe = zmalloc(PIPEENTRIES * sizeof(uint64_t));
+
+      set_pipe_id(pipe, id);
+      set_pipe_buffer(pipe, (char*) zmalloc(round_up(PIPE_CAPACITY, sizeof(uint64_t))));
+
+      *(pipe_table + id) = (uint64_t) pipe;
+
+      syscall_return(context, id);
+
+      return;
+    }
+
+    id = id + 1;
+  }
+
+  // registry full
+  syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
+}
+
+void implement_pipe_destroy(uint64_t* context) {
+  uint64_t  id;
+  uint64_t* pipe;
+
+  id = *(get_regs(context) + REG_A0);
+
+  pipe = lookup_pipe(id);
+
+  if (pipe == (uint64_t*) 0) {
+    syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
+
+    return;
+  }
+
+  // invalidate the ID: every later call with it returns -1
+  *(pipe_table + id) = 0;
+
+  // TODO: free pipe object and storage once selfie has a free list
+
+  syscall_return(context, 0);
+}
+
+/***********************************************************************/
+/***********************************************************************/
+
 uint64_t handle_system_call(uint64_t* context) {
   uint64_t a7;
 
@@ -11821,12 +11982,13 @@ uint64_t handle_system_call(uint64_t* context) {
 
   a7 = *(get_regs(context) + REG_A7);
 
-  if (a7 == SYSCALL_BRK) {
+  if (a7 == SYSCALL_BRK){
     if (is_gc_enabled(context))
       implement_gc_brk(context);
     else
       implement_brk(context);
-  } else if (a7 == SYSCALL_READ)
+  }
+  else if (a7 == SYSCALL_READ)
     implement_read(context);
   else if (a7 == SYSCALL_WRITE)
     implement_write(context);
@@ -11836,6 +11998,14 @@ uint64_t handle_system_call(uint64_t* context) {
     implement_fork(context);
   else if (a7 == SYSCALL_WAIT)
     implement_wait(context);
+  /*********************************************/
+  /*********************************************/
+  else if (a7 == SYSCALL_PIPE_CREATE)
+    implement_pipe_create(context);
+  else if (a7 == SYSCALL_PIPE_DESTROY)
+    implement_pipe_destroy(context);
+  /*********************************************/
+  /*********************************************/
   else if (a7 == SYSCALL_EXIT) {
     implement_exit(context);
 
