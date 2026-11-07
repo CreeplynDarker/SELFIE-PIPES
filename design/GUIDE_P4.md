@@ -61,16 +61,15 @@ FAIL  p4_temporary
 
 ## Step 1 — Syscall numbers and prototypes
 
-**Where:** right after the Phase 3 lines `void emit_pipe_create();` / `void emit_pipe_destroy();`. Search for `void emit_pipe_destroy();`.
+**Where:** below the Phase 3 lines `void emit_pipe_create();` / `void emit_pipe_destroy();` and the marker comments after them, just before the comment that starts with `/* DIRFD_AT_FDCWD`. Search for `/* DIRFD_AT_FDCWD corresponds`.
 
-**Find these lines** (lines 1315–1316):
+**Find this line** (line 1321):
 
 ```c
-void emit_pipe_destroy();
-
+/* DIRFD_AT_FDCWD corresponds to AT_FDCWD in fcntl.h and
 ```
 
-**Insert these 6 lines right after them** (nothing is removed):
+**Insert these 6 lines right before it** (nothing is removed):
 
 ```c
 uint64_t SYSCALL_PIPE_WRITE = 501;
@@ -89,7 +88,7 @@ void emit_pipe_read();
 
 **Where:** inside `emit_bootstrapping`, right after the two lines you added in Phase 3. Search for `// emit system call wrappers` and look a few lines below it.
 
-**Find this line** (line 6359):
+**Find this line** (line 6369):
 
 ```c
   emit_pipe_destroy();
@@ -108,19 +107,15 @@ void emit_pipe_read();
 
 ## Step 3 — The wrapper functions
 
-**Where:** right after the end of the function `emit_pipe_destroy()` you added in Phase 3, before `void emit_open() {`. Search for `SYSCALL_PIPE_DESTROY);` (the match inside `emit_pipe_destroy`).
+**Where:** below the function `emit_pipe_destroy()` you added in Phase 3 and the marker comments after it, just before `void emit_open() {`. Search for `void emit_open() {`.
 
-**Find these lines** (lines 7869–7873):
+**Find this line** (line 7897):
 
 ```c
-  emit_addi(REG_A7, REG_ZR, SYSCALL_PIPE_DESTROY);
-  emit_ecall();
-  emit_jalr(REG_ZR, REG_RA, 0);
-}
-
+void emit_open() {
 ```
 
-**Insert these 26 lines right after them** (nothing is removed):
+**Insert these 26 lines right before it** (nothing is removed):
 
 ```c
 void emit_pipe_transfer(char* name, uint64_t syscall) {
@@ -162,7 +157,7 @@ void emit_pipe_read() {
 
 **Where:** right after the end of `implement_pipe_destroy` (Phase 3), before `uint64_t handle_system_call(uint64_t* context) {`. Search for `void implement_pipe_destroy(uint64_t* context) {` and go to the end of that function.
 
-**Find these lines** (lines 11946–11948):
+**Find these lines** (lines 12004–12006):
 
 ```c
   syscall_return(context, 0);
@@ -370,7 +365,7 @@ void implement_pipe_read(uint64_t* context) {
 
 **Where:** inside `handle_system_call`, right after the two Phase 3 branches. Search for `implement_pipe_destroy(context);`.
 
-**Find this line** (line 12146):
+**Find this line** (line 12210):
 
 ```c
     implement_pipe_destroy(context);
