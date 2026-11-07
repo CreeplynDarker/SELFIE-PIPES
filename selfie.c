@@ -12304,8 +12304,15 @@ void implement_pipe_destroy(uint64_t* context) {
     return;
   }
 
-  // invalidate the ID: every later call with it returns -1
+  /*********************************************************************/
+  /*********************************************************************/
+  // invalidate the ID first: woken waiters retry their ecall and get -1
   *(pipe_table + id) = 0;
+
+  wake_all_waiters(pipe, PIPE_READERS);
+  wake_all_waiters(pipe, PIPE_WRITERS);
+  /*********************************************************************/
+  /*********************************************************************/
 
   // TODO: free pipe object and storage once selfie has a free list
 
