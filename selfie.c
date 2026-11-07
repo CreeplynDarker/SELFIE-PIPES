@@ -2247,10 +2247,22 @@ void unblock_context(uint64_t* context);
 // | 36 | child exit code		| exit status code of last exited child
 // | 37 | child pid				| pid of exited child
 
+/********************************************************************/
+/********************************************************************/
+// | 38 | next waiter     | next context in the same pipe wait queue
+/********************************************************************/
+/********************************************************************/
+
 // number of entries of a machine context:
 // 14 uint64_t + 6 uint64_t* + 1 char* + 7 uint64_t + 2 uint64_t* + 2 uint64_t entries
 // extended in the symbolic execution engine and the Boehm garbage collector
-uint64_t CONTEXTENTRIES = 38;
+
+/********************************************************************/
+/********************************************************************/
+uint64_t CONTEXTENTRIES = 39;
+/********************************************************************/
+/********************************************************************/
+
 uint64_t N_CONTEXTS = 0;
 uint64_t* RUNNING = (uint64_t*) 0;
 uint64_t N_BLOCKED_CONTEXTS = 0;
@@ -2309,6 +2321,12 @@ uint64_t nchildren(uint64_t* context) { return (uint64_t) (context + 35); }
 uint64_t child_exit_code(uint64_t* context) { return (uint64_t) (context + 36); }
 uint64_t child_pid(uint64_t* context) { return (uint64_t) (context + 37); }
 
+/****************************************************************************/
+/****************************************************************************/
+uint64_t next_waiter(uint64_t* context) { return (uint64_t) (context + 38); }
+/****************************************************************************/
+/****************************************************************************/
+
 uint64_t* get_next_context(uint64_t* context)    { return (uint64_t*) *context; }
 uint64_t* get_prev_context(uint64_t* context)    { return (uint64_t*) *(context + 1); }
 uint64_t  get_pc(uint64_t* context)              { return             *(context + 2); }
@@ -2350,6 +2368,12 @@ uint64_t get_nchildren(uint64_t* context) { return *(context + 35); }
 uint64_t get_child_exit_code(uint64_t* context) { return *(context + 36); }
 uint64_t get_child_pid (uint64_t* context) { return *(context + 37); }
 
+/**********************************************************************************/
+/**********************************************************************************/
+uint64_t* get_next_waiter(uint64_t* context) { return (uint64_t*) *(context + 38); }
+/**********************************************************************************/
+/**********************************************************************************/
+
 void set_next_context(uint64_t* context, uint64_t* next)     { *context        = (uint64_t) next; }
 void set_prev_context(uint64_t* context, uint64_t* prev)     { *(context + 1)  = (uint64_t) prev; }
 void set_pc(uint64_t* context, uint64_t pc)                  { *(context + 2)  = pc; }
@@ -2390,6 +2414,12 @@ void set_status(uint64_t* context, uint64_t status) { *(context + 34) = status; 
 void set_nchildren(uint64_t* context, uint64_t nchildren) { *(context + 35) = nchildren; }
 void set_child_exit_code(uint64_t* context, uint64_t exit_code) { *(context + 36) = exit_code; }
 void set_child_pid(uint64_t* context, uint64_t child_pid) { *(context + 37) = child_pid; }
+
+/*************************************************************************************************/
+/*************************************************************************************************/
+void set_next_waiter(uint64_t* context, uint64_t* waiter) { *(context + 38) = (uint64_t) waiter; }
+/*************************************************************************************************/
+/*************************************************************************************************/
 
 // -----------------------------------------------------------------
 // -------------------------- MICROKERNEL --------------------------
@@ -11302,6 +11332,13 @@ void init_context(uint64_t* context, uint64_t* parent, uint64_t* vctxt) {
   set_child_pid(context, 0);
   /********************************************/
   /********************************************/
+
+  /********************************************/
+  /********************************************/
+  set_next_waiter(context, (uint64_t*) 0);
+  /********************************************/
+  /********************************************/
+
 }
 
 uint64_t* find_context(uint64_t* parent, uint64_t* vctxt) {
@@ -11936,6 +11973,15 @@ uint64_t MAX_PIPES     = 16; // valid IDs are 1 .. MAX_PIPES - 1
 
 uint64_t* pipe_table = (uint64_t*) 0; // global registry: pipe_table[id] -> pipe object
 
+/*********************************************************************/
+/*********************************************************************/
+uint64_t PIPE_READERS = 5; // offset of the readers queue (head, tail)
+uint64_t PIPE_WRITERS = 7; // offset of the writers queue (head, tail)
+
+uint64_t debug_pipes = 0;
+/*********************************************************************/
+/*********************************************************************/
+
 uint64_t get_pipe_id(uint64_t* pipe)     { return         *pipe; }
 char*    get_pipe_buffer(uint64_t* pipe) { return (char*) *(pipe + 1); }
 uint64_t get_pipe_r(uint64_t* pipe)      { return         *(pipe + 2); }
@@ -11964,6 +12010,54 @@ uint64_t* lookup_pipe(uint64_t id) {
   else
     return (uint64_t*) *(pipe_table + id);
 }
+
+/*********************************************************************************************/
+/*********************************************************************************************/
+void enqueue_waiter(uint64_t* pipe, uint64_t queue, uint64_t* context) {
+  // queue is PIPE_READERS or PIPE_WRITERS: head at pipe + queue, tail at pipe + queue + 1;
+  // the queue links contexts through their own next-waiter field, because
+  // block_context reuses the next/prev fields for the blocked_contexts list
+  set_next_waiter(context, (uint64_t*) 0);
+
+  if (*(pipe + queue) == 0)
+    *(pipe + queue) = (uint64_t) context;
+  else
+    set_next_waiter((uint64_t*) *(pipe + queue + 1), context);
+
+  *(pipe + queue + 1) = (uint64_t) context;
+
+  // off used_contexts, onto blocked_contexts: the scheduler can no longer pick it
+  block_context(context);
+
+  if (debug_pipes)
+    printf("%s: pid %lu blocks on pipe %lu\n", selfie_name, get_pid(context), get_pipe_id(pipe));
+}
+
+void wake_all_waiters(uint64_t* pipe, uint64_t queue) {
+  uint64_t* context;
+  uint64_t* next;
+
+  context = (uint64_t*) *(pipe + queue);
+
+  while (context != (uint64_t*) 0) {
+    next = get_next_waiter(context);
+
+    set_next_waiter(context, (uint64_t*) 0);
+
+    // back onto used_contexts as READY; its ecall runs again when it is scheduled
+    unblock_context(context);
+
+    if (debug_pipes)
+      printf("%s: pipe %lu wakes pid %lu\n", selfie_name, get_pipe_id(pipe), get_pid(context));
+
+    context = next;
+  }
+
+  *(pipe + queue)     = 0;
+  *(pipe + queue + 1) = 0;
+}
+/*********************************************************************************************/
+/*********************************************************************************************/
 
 void implement_pipe_create(uint64_t* context) {
   uint64_t id;
@@ -11995,9 +12089,9 @@ void implement_pipe_create(uint64_t* context) {
   // registry full
   syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
 }
+/***********************************************************************/
+/***********************************************************************/
 
-/***********************************************************************/
-/***********************************************************************/
 uint64_t* pipe_word = (uint64_t*) 0; // kernel scratch word for editing one byte of a guest word
 
 uint64_t guest_word_address(uint64_t* context, uint64_t vaddr) {
@@ -12050,12 +12144,17 @@ void implement_pipe_write(uint64_t* context) {
     syscall_return(context, 0);
 
     return;
-  } else if (get_pipe_n(pipe) == PIPE_CAPACITY) {
-    // PHASE 4 ONLY: nothing can move yet, return 0 (phase 5 blocks here instead)
-    syscall_return(context, 0);
+  }
 
+  /*********************************************************/
+  /*********************************************************/
+  else if (get_pipe_n(pipe) == PIPE_CAPACITY){
+    // full: sleep WITHOUT advancing the PC, so this ecall runs again after a wakeup
+    enqueue_waiter(pipe, PIPE_WRITERS, context);
     return;
   }
+  /*********************************************************/
+  /*********************************************************/
 
   // move min(size, free space): a short write is allowed, callers loop
   k = 0;
@@ -12089,6 +12188,14 @@ void implement_pipe_write(uint64_t* context) {
     }
   }
 
+  /**************************************/
+  /**************************************/
+  if (k > 0){
+    wake_all_waiters(pipe, PIPE_READERS);
+  }
+  /**************************************/
+  /**************************************/
+
   if (bad_address)
     if (k == 0)
       k = sign_shrink(-1, SYSCALL_BITWIDTH);
@@ -12120,12 +12227,17 @@ void implement_pipe_read(uint64_t* context) {
     syscall_return(context, 0);
 
     return;
-  } else if (get_pipe_n(pipe) == 0) {
-    // PHASE 4 ONLY: nothing can move yet, return 0 (phase 5 blocks here instead)
-    syscall_return(context, 0);
+  }
 
+  /*********************************************************/
+  /*********************************************************/
+  else if (get_pipe_n(pipe) == 0){
+    // empty: sleep WITHOUT advancing the PC, so this ecall runs again after a wakeup
+    enqueue_waiter(pipe, PIPE_READERS, context);
     return;
   }
+  /*********************************************************/
+  /*********************************************************/
 
   // move min(size, stored bytes): a short read is allowed, callers loop
   k = 0;
@@ -12161,6 +12273,14 @@ void implement_pipe_read(uint64_t* context) {
     }
   }
 
+  /****************************************/
+  /****************************************/
+  if (k > 0){
+    wake_all_waiters(pipe, PIPE_WRITERS);
+  }
+  /****************************************/
+  /****************************************/
+  
   if (bad_address)
     if (k == 0)
       k = sign_shrink(-1, SYSCALL_BITWIDTH);
