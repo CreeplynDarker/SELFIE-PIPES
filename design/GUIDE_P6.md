@@ -54,7 +54,7 @@ Both failures prove the tests can detect a missing wakeup.
 
 **Where:** inside `void implement_pipe_destroy(uint64_t* context)`, which you added in Phase 3. Search for `// invalidate the ID`.
 
-**Remove these 2 lines** (lines 11995–11996):
+**Remove these 2 lines** (lines 12307–12308):
 
 ```c
   // invalidate the ID: every later call with it returns -1
@@ -190,7 +190,7 @@ git diff base phase-6 --stat -- selfie.c
 git log --oneline base..phase-6
 ```
 
-- The first shows everything you changed in `selfie.c` since the course base code (`-- selfie.c` leaves out the guides and other files you added to the repo). Expected: `1 file changed, 482 insertions(+), 32 deletions(-)`.
+- The first shows everything you changed in `selfie.c` since the course base code (`-- selfie.c` leaves out the guides and other files you added to the repo). Expected: `1 file changed, 656 insertions(+), 52 deletions(-)`. (The plan itself needs 482 insertions and 32 deletions; the rest are your `/****/` marker comments and layout changes.)
 - The second lists every commit since `base`, newest first: your seven phase commits, plus any others you made in between (like the commits that added the guides).
 
 ---
