@@ -72,7 +72,7 @@ What each result means:
 
 **Where:** the comment that describes the machine context, near the top. Search for `| 37 | child pid`.
 
-**Find this line** (line 2240):
+**Find this line** (line 2248):
 
 ```c
 // | 37 | child pid				| pid of exited child
@@ -92,7 +92,7 @@ What each result means:
 
 **Where:** right below that table. Search for `CONTEXTENTRIES = 38`.
 
-**Remove this line** (line 2246):
+**Remove this line** (line 2254):
 
 ```c
 uint64_t CONTEXTENTRIES = 38;
@@ -112,7 +112,7 @@ uint64_t CONTEXTENTRIES = 39;
 
 **Where:** in the list of field-address functions. Search for `uint64_t child_pid(uint64_t* context)`.
 
-**Find this line** (line 2303):
+**Find this line** (line 2311):
 
 ```c
 uint64_t child_pid(uint64_t* context) { return (uint64_t) (context + 37); }
@@ -132,7 +132,7 @@ uint64_t next_waiter(uint64_t* context) { return (uint64_t) (context + 38); }
 
 **Where:** in the list of `get_` functions. Search for `uint64_t get_child_pid (uint64_t* context)` (note the space before the `(`, as in the base code).
 
-**Find this line** (line 2345):
+**Find this line** (line 2353):
 
 ```c
 uint64_t get_child_pid (uint64_t* context) { return *(context + 37); }
@@ -152,7 +152,7 @@ uint64_t* get_next_waiter(uint64_t* context) { return (uint64_t*) *(context + 38
 
 **Where:** in the list of `set_` functions. Search for `void set_child_pid(uint64_t* context`.
 
-**Find this line** (line 2387):
+**Find this line** (line 2395):
 
 ```c
 void set_child_pid(uint64_t* context, uint64_t child_pid) { *(context + 37) = child_pid; }
@@ -172,7 +172,7 @@ void set_next_waiter(uint64_t* context, uint64_t* waiter) { *(context + 38) = (u
 
 **Where:** at the end of `init_context`, after the lines you added in Phase 1. Search for `set_child_pid(context, 0);`.
 
-**Find this line** (line 11250):
+**Find this line** (line 11306):
 
 ```c
   set_child_pid(context, 0);
@@ -194,7 +194,7 @@ void set_next_waiter(uint64_t* context, uint64_t* waiter) { *(context + 38) = (u
 
 **Where:** in the Phase 3 pipe section, right after `pipe_table`. Search for `uint64_t* pipe_table = (uint64_t*) 0;`.
 
-**Find these lines** (lines 11870–11871):
+**Find these lines** (lines 11942–11943):
 
 ```c
 uint64_t* pipe_table = (uint64_t*) 0; // global registry: pipe_table[id] -> pipe object
@@ -222,7 +222,7 @@ uint64_t debug_pipes = 0;
 
 **Where:** right after the end of `lookup_pipe`, before `void implement_pipe_create(uint64_t* context) {`. Search for `uint64_t* lookup_pipe(uint64_t id) {` and go to the end of that function.
 
-**Find these lines** (lines 11903–11905):
+**Find these lines** (lines 11975–11977):
 
 ```c
     return (uint64_t*) *(pipe_table + id);
@@ -296,7 +296,7 @@ void wake_all_waiters(uint64_t* pipe, uint64_t queue) {
 
 **Where:** inside `implement_pipe_write`. Search for `== PIPE_CAPACITY) {` (it appears only once, in `implement_pipe_write`); the two Phase 4 lines marked `PHASE 4 ONLY` follow it.
 
-**Remove these 3 lines** (lines 12055–12057):
+**Remove these 3 lines** (lines 12107–12109):
 
 ```c
   } else if (get_pipe_n(pipe) == PIPE_CAPACITY) {
@@ -320,7 +320,7 @@ void wake_all_waiters(uint64_t* pipe, uint64_t queue) {
 
 **Where:** still in `implement_pipe_write`, right after the `while (more)` loop, before `if (bad_address)`. Search for `get_pipe_n(pipe) + 1);` and go down to the end of the loop.
 
-**Find these lines** (lines 12087–12093):
+**Find these lines** (lines 12139–12145):
 
 ```c
         set_pipe_n(pipe, get_pipe_n(pipe) + 1);
@@ -348,7 +348,7 @@ void wake_all_waiters(uint64_t* pipe, uint64_t queue) {
 
 **Where:** inside `implement_pipe_read`. Search for `PHASE 4 ONLY`; after Step 9 the only match left is in `implement_pipe_read`.
 
-**Remove these 2 lines** (lines 12129–12130):
+**Remove these 2 lines** (lines 12181–12182):
 
 ```c
     // PHASE 4 ONLY: nothing can move yet, return 0 (phase 5 blocks here instead)
@@ -370,7 +370,7 @@ void wake_all_waiters(uint64_t* pipe, uint64_t queue) {
 
 **Where:** still in `implement_pipe_read`, right after its `while (more)` loop. Search for `get_pipe_n(pipe) - 1);` and go down to the end of the loop.
 
-**Find these lines** (lines 12162–12168):
+**Find these lines** (lines 12214–12220):
 
 ```c
         set_pipe_n(pipe, get_pipe_n(pipe) - 1);
