@@ -1318,6 +1318,16 @@ void emit_pipe_destroy();
 /**********************************************/
 /**********************************************/
 
+/**********************************************/
+/**********************************************/
+uint64_t SYSCALL_PIPE_WRITE = 501;
+uint64_t SYSCALL_PIPE_READ  = 502;
+
+void emit_pipe_write();
+void emit_pipe_read();
+/**********************************************/
+/**********************************************/
+
 /* DIRFD_AT_FDCWD corresponds to AT_FDCWD in fcntl.h and
    is passed as first argument of the openat system call
    emulating the (in Linux) deprecated open system call. */
@@ -6357,12 +6367,21 @@ void selfie_compile() {
   emit_fork();
   emit_wait();
   emit_open();
+
   /*****************************************/
   /*****************************************/
   emit_pipe_create();
   emit_pipe_destroy();
   /*****************************************/
   /*****************************************/
+  
+  /*****************************************/
+  /*****************************************/
+  emit_pipe_write();
+  emit_pipe_read();
+  /*****************************************/
+  /*****************************************/
+
   emit_malloc();
   emit_switch();
 
@@ -7882,6 +7901,36 @@ void emit_pipe_destroy() {
   emit_addi(REG_A7, REG_ZR, SYSCALL_PIPE_DESTROY);
   emit_ecall();
   emit_jalr(REG_ZR, REG_RA, 0);
+}
+/***********************************************************************/
+/***********************************************************************/
+
+/***********************************************************************/
+/***********************************************************************/
+void emit_pipe_transfer(char* name, uint64_t syscall) {
+  create_symbol_table_entry(GLOBAL_TABLE, string_copy(name),
+    0, PROCEDURE, UINT64_T, 3, code_size);
+
+  emit_load(REG_A0, REG_SP, 0); // pipe ID
+  emit_addi(REG_SP, REG_SP, WORDSIZE);
+
+  emit_load(REG_A1, REG_SP, 0); // *buffer
+  emit_addi(REG_SP, REG_SP, WORDSIZE);
+
+  emit_load(REG_A2, REG_SP, 0); // size
+  emit_addi(REG_SP, REG_SP, WORDSIZE);
+
+  emit_addi(REG_A7, REG_ZR, syscall);
+  emit_ecall();
+  emit_jalr(REG_ZR, REG_RA, 0);
+}
+
+void emit_pipe_write() {
+  emit_pipe_transfer("pipe_write", SYSCALL_PIPE_WRITE);
+}
+
+void emit_pipe_read() {
+  emit_pipe_transfer("pipe_read", SYSCALL_PIPE_READ);
 }
 /***********************************************************************/
 /***********************************************************************/
@@ -11864,7 +11913,6 @@ void up_load_arguments(uint64_t* context, uint64_t argc, uint64_t* argv) {
 
 /***********************************************************************/
 /***********************************************************************/
-
 // -----------------------------------------------------------------
 // ----------------------------- PIPES -----------------------------
 // -----------------------------------------------------------------
@@ -11948,6 +11996,180 @@ void implement_pipe_create(uint64_t* context) {
   syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
 }
 
+/***********************************************************************/
+/***********************************************************************/
+uint64_t* pipe_word = (uint64_t*) 0; // kernel scratch word for editing one byte of a guest word
+
+uint64_t guest_word_address(uint64_t* context, uint64_t vaddr) {
+  // virtual address of the guest word that holds byte vaddr, or 0 if inaccessible;
+  // works for any byte alignment, unlike copy_buffer
+  uint64_t waddr;
+
+  waddr = vaddr - vaddr % WORDSIZE;
+
+  if (is_virtual_address_valid(waddr, WORDSIZE) == 0)
+    return 0;
+  else if (is_data_stack_heap_address(context, waddr) == 0)
+    return 0;
+
+  if (is_virtual_address_mapped(get_pt(context), waddr) == 0) {
+    // valid but never touched (e.g. fresh malloc memory): map it, like handle_page_fault
+    if (pavailable() == 0)
+      return 0;
+
+    map_page(context, get_page_of_virtual_address(waddr), (uint64_t) palloc());
+  }
+
+  if (pipe_word == (uint64_t*) 0)
+    pipe_word = zmalloc(sizeof(uint64_t));
+
+  return waddr;
+}
+
+void implement_pipe_write(uint64_t* context) {
+  uint64_t  id;
+  uint64_t  vbuffer;
+  uint64_t  size;
+  uint64_t* pipe;
+  uint64_t  waddr;
+  uint64_t  k;
+  uint64_t  more;
+  uint64_t  bad_address;
+
+  id      = *(get_regs(context) + REG_A0);
+  vbuffer = *(get_regs(context) + REG_A1);
+  size    = *(get_regs(context) + REG_A2);
+
+  pipe = lookup_pipe(id);
+
+  if (pipe == (uint64_t*) 0) {
+    syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
+
+    return;
+  } else if (size == 0) {
+    syscall_return(context, 0);
+
+    return;
+  } else if (get_pipe_n(pipe) == PIPE_CAPACITY) {
+    // PHASE 4 ONLY: nothing can move yet, return 0 (phase 5 blocks here instead)
+    syscall_return(context, 0);
+
+    return;
+  }
+
+  // move min(size, free space): a short write is allowed, callers loop
+  k = 0;
+  more = 1;
+  bad_address = 0;
+
+  while (more) {
+    if (k == size)
+      more = 0;
+    else if (get_pipe_n(pipe) == PIPE_CAPACITY)
+      more = 0;
+    else {
+      waddr = guest_word_address(context, vbuffer + k);
+
+      if (waddr == 0) {
+        bad_address = 1;
+
+        more = 0;
+      } else {
+        // read one byte of the guest word through the kernel's scratch word
+        *pipe_word = load_virtual_memory(get_pt(context), waddr);
+
+        store_character(get_pipe_buffer(pipe), get_pipe_w(pipe),
+          load_character((char*) pipe_word, (vbuffer + k) % WORDSIZE));
+
+        set_pipe_w(pipe, (get_pipe_w(pipe) + 1) % PIPE_CAPACITY);
+        set_pipe_n(pipe, get_pipe_n(pipe) + 1);
+
+        k = k + 1;
+      }
+    }
+  }
+
+  if (bad_address)
+    if (k == 0)
+      k = sign_shrink(-1, SYSCALL_BITWIDTH);
+
+  syscall_return(context, k);
+}
+
+void implement_pipe_read(uint64_t* context) {
+  uint64_t  id;
+  uint64_t  vbuffer;
+  uint64_t  size;
+  uint64_t* pipe;
+  uint64_t  waddr;
+  uint64_t  k;
+  uint64_t  more;
+  uint64_t  bad_address;
+
+  id      = *(get_regs(context) + REG_A0);
+  vbuffer = *(get_regs(context) + REG_A1);
+  size    = *(get_regs(context) + REG_A2);
+
+  pipe = lookup_pipe(id);
+
+  if (pipe == (uint64_t*) 0) {
+    syscall_return(context, sign_shrink(-1, SYSCALL_BITWIDTH));
+
+    return;
+  } else if (size == 0) {
+    syscall_return(context, 0);
+
+    return;
+  } else if (get_pipe_n(pipe) == 0) {
+    // PHASE 4 ONLY: nothing can move yet, return 0 (phase 5 blocks here instead)
+    syscall_return(context, 0);
+
+    return;
+  }
+
+  // move min(size, stored bytes): a short read is allowed, callers loop
+  k = 0;
+  more = 1;
+  bad_address = 0;
+
+  while (more) {
+    if (k == size)
+      more = 0;
+    else if (get_pipe_n(pipe) == 0)
+      more = 0;
+    else {
+      waddr = guest_word_address(context, vbuffer + k);
+
+      if (waddr == 0) {
+        bad_address = 1;
+
+        more = 0;
+      } else {
+        // change one byte of the guest word, keep the other seven
+        *pipe_word = load_virtual_memory(get_pt(context), waddr);
+
+        store_character((char*) pipe_word, (vbuffer + k) % WORDSIZE,
+          load_character(get_pipe_buffer(pipe), get_pipe_r(pipe)));
+
+        store_virtual_memory(get_pt(context), waddr, *pipe_word);
+
+        set_pipe_r(pipe, (get_pipe_r(pipe) + 1) % PIPE_CAPACITY);
+        set_pipe_n(pipe, get_pipe_n(pipe) - 1);
+
+        k = k + 1;
+      }
+    }
+  }
+
+  if (bad_address)
+    if (k == 0)
+      k = sign_shrink(-1, SYSCALL_BITWIDTH);
+
+  syscall_return(context, k);
+}
+/***********************************************************************/
+/***********************************************************************/
+
 void implement_pipe_destroy(uint64_t* context) {
   uint64_t  id;
   uint64_t* pipe;
@@ -11969,7 +12191,6 @@ void implement_pipe_destroy(uint64_t* context) {
 
   syscall_return(context, 0);
 }
-
 /***********************************************************************/
 /***********************************************************************/
 
@@ -11998,6 +12219,7 @@ uint64_t handle_system_call(uint64_t* context) {
     implement_fork(context);
   else if (a7 == SYSCALL_WAIT)
     implement_wait(context);
+  
   /*********************************************/
   /*********************************************/
   else if (a7 == SYSCALL_PIPE_CREATE)
@@ -12006,6 +12228,16 @@ uint64_t handle_system_call(uint64_t* context) {
     implement_pipe_destroy(context);
   /*********************************************/
   /*********************************************/
+
+  /*********************************************/
+  /*********************************************/
+  else if (a7 == SYSCALL_PIPE_WRITE)
+    implement_pipe_write(context);
+  else if (a7 == SYSCALL_PIPE_READ)
+    implement_pipe_read(context);
+  /*********************************************/
+  /*********************************************/
+
   else if (a7 == SYSCALL_EXIT) {
     implement_exit(context);
 
